@@ -58,7 +58,7 @@ class webmasterApi
      *
      * @var string
      */
-    private $apiUrl = 'https://api.webmaster.yandex.net/v3';
+    private $apiUrl = 'https://api.webmaster.yandex.net/v3.1';
 
     /**
      * UserID in webmaster
@@ -136,6 +136,10 @@ class webmasterApi
      */
     public function getApiUrl($resource)
     {
+        if (strpos($resource, $this->apiUrl) === 0) {
+            return $resource;
+        }
+
         $apiUrl = $this->apiUrl;
         if ($resource !== '/user/') {
             if (!$this->userID) {
@@ -218,13 +222,14 @@ class webmasterApi
      *
      * @param $resource string Name of api resource
      * @param $data array Array with request params (useful to CURLOPT_POSTFIELDS: http://php.net/curl_setopt )
+     * @param $content_type string (default application/json)
      * @return false|JsonSerializable
      */
-    protected function post($resource, $data)
+    protected function post($resource, $data, $content_type = 'application/json')
     {
         $url = $this->getApiUrl($resource);
 
-        $headers = $this->getDefaultHttpHeaders();
+        $headers = $this->getDefaultHttpHeaders($content_type);
 
         $dataJson = json_encode($data);
 
@@ -236,8 +241,16 @@ class webmasterApi
             $this->curlOpts($ch);
             // передаем заголовки
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-            curl_setopt($ch, CURLOPT_POST, 1);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $dataJson);
+
+            switch ($content_type) {
+                case 'application/rss+xml':
+                    curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+                    break;
+                default:
+                    curl_setopt($ch, CURLOPT_POST, 1);
+                    curl_setopt($ch, CURLOPT_POSTFIELDS, $dataJson);
+            }
+
             $response = curl_exec($ch);
             curl_close($ch);
         } elseif (!empty($allow_url_fopen)) {
@@ -333,12 +346,12 @@ class webmasterApi
         return $response;
     }
 
-    protected function getDefaultHttpHeaders()
+    protected function getDefaultHttpHeaders($content_type = 'application/json')
     {
         return array(
             'Authorization: OAuth ' . $this->accessToken,
             'Accept: application/json',
-            'Content-type: application/json'
+            'Content-type: ' . $content_type
         );
     }
     /**
@@ -806,6 +819,61 @@ class webmasterApi
     public function getExternalLinks($hostID, $offset = 0, $limit = 100)
     {
         return $this->get('/hosts/' . $hostID . '/links/external/samples/', array('offset' => $offset, 'limit' => $limit));
+    }
+
+    /**
+     * Получение адреса для добавления RSS-канала турбо-страниц
+     *
+     * @param $hostID string Host id in webmaster
+     * @param string $mode (PRODUCTION|DEBUG)
+     * @return object Json
+     */
+    public function getTurboUploadAddress($hostID, $mode = 'PRODUCTION')
+    {
+        return $this->get('/hosts/' . $hostID . '/turbo/uploadAddress', ['mode' => $mode]);
+    }
+
+    /**
+     * Добавление RSS-канала
+     *
+     * @param $upload_address string адрес загрузки RSS, полученный методом getTurboUploadAddress
+     * @param $data string (Content-type: application/rss+xml)
+     * @return object Json
+     */
+    public function uploadRSS($upload_address, $data)
+    {
+        return $this->post($upload_address, $data, 'application/rss+xml');
+    }
+
+
+    /**
+     * Получить список созданных задач на добавление RSS-каналов за последний месяц
+     *
+     * @param $hostID string ID сайта. Доступен при получении списка сайтов пользователя.
+     * @param $task_type_filter string (DEBUG|PRODUCTION|ALL) Фильтрация режима загрузки Турбо-страниц
+     * @param $offset integer Смещение в списке. Минимальное значение — 0
+     * @param $limit integer Ограничение на количество элементов в списке. Минимальное значение — 1; максимальное значение — 100.
+     * @return object Json
+     */
+    public function getTasks($hostID, $task_type_filter = 'ALL', $offset = 0, $limit = 100)
+    {
+        return $this->get('/hosts/' . $hostID . '/turbo/tasks', [
+            'task_type_filter' => $task_type_filter,
+            'offset' => $offset,
+            'limit' => $limit,
+        ]);
+    }
+
+    /**
+     * Получение информации о загрузках
+     *
+     * @param $hostID string ID сайта. Доступен при получении списка сайтов пользователя.
+     * @param $taskID string Идентификатор задачи на добавление RSS-канала в Яндекс.Вебмастер
+     * @return object Json
+     */
+    public function getTaskInfo($hostID, $taskID)
+    {
+        return $this->get('/hosts/' . $hostID . '/turbo/tasks/' . $taskID);
     }
 
     /**
